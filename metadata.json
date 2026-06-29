@@ -1,0 +1,6 @@
+{
+  "name": "EPUBer",
+  "description": "A high-performance, offline-first EPUB reader designed with fluid column pagination, customizable styling options, and sandboxed IndexedDB storage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
