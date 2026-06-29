@@ -2,6 +2,10 @@
 
 A high-performance, offline-first reading application designed with fluid column pagination, customizable styling, sandboxed IndexedDB storage, and AI-powered multilingual translation capabilities.
 
+## Video Demo
+
+https://youtu.be/-tZEm5w5TTU
+
 ## Key Features
 
 - **Multi-Format Reading Engine**: Supports parsing and rendering of `.epub`, `.txt`, and `.md` files directly in the browser.
