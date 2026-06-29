@@ -14,6 +14,22 @@ interface SettingsModalProps {
   onUpdateSettings: (updater: (prev: ReaderSettings) => ReaderSettings) => void;
 }
 
+const FONT_FAMILIES = [
+  { value: 'sans-serif', label: 'System Sans-Serif' },
+  { value: 'serif', label: 'Classic Book Serif (Georgia)' },
+  { value: 'monospace', label: 'Technical Mono (JetBrains Code)' },
+  { value: 'opendyslexic', label: 'OpenDyslexic (Dyslexia Aid)' }
+] as const;
+
+const THEMES = [
+  { id: 'light', name: 'Light', bg: 'bg-[#FAF9F6]', text: 'text-[#212529]' },
+  { id: 'sepia', name: 'Sepia', bg: 'bg-[#F4ECD8]', text: 'text-[#433422]' },
+  { id: 'dark', name: 'Dark', bg: 'bg-[#0c0c0e]', text: 'text-[#E2E8F0]' },
+  { id: 'contrast', name: 'Hi-Con', bg: 'bg-[#000000]', text: 'text-[#FFFFFF]' }
+] as const;
+
+const LINE_HEIGHTS = [1.3, 1.5, 1.7, 1.9];
+
 export default function SettingsModal({
   isOpen,
   onClose,
@@ -89,12 +105,7 @@ export default function SettingsModal({
               Display Theme
             </span>
             <div className="grid grid-cols-4 gap-2">
-              {[
-                { id: 'light', name: 'Light', bg: 'bg-[#FAF9F6]', text: 'text-[#212529]' },
-                { id: 'sepia', name: 'Sepia', bg: 'bg-[#F4ECD8]', text: 'text-[#433422]' },
-                { id: 'dark', name: 'Dark', bg: 'bg-[#0c0c0e]', text: 'text-[#E2E8F0]' },
-                { id: 'contrast', name: 'Hi-Con', bg: 'bg-[#000000]', text: 'text-[#FFFFFF]' }
-              ].map((item) => {
+              {THEMES.map((item) => {
                 const isActive = settings.theme === item.id;
                 return (
                   <button
@@ -127,10 +138,9 @@ export default function SettingsModal({
               onChange={(e) => handleFontFamilyChange(e.target.value)}
               className="w-full px-3 py-1.5 text-xs bg-[#16161a] border border-white/10 rounded-lg text-slate-200 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/25 cursor-pointer"
             >
-              <option value="sans-serif">System Sans-Serif</option>
-              <option value="serif">Classic Book Serif (Georgia)</option>
-              <option value="monospace">Technical Mono (JetBrains Code)</option>
-              <option value="opendyslexic">OpenDyslexic (Dyslexia Aid)</option>
+              {FONT_FAMILIES.map(font => (
+                <option key={font.value} value={font.value}>{font.label}</option>
+              ))}
             </select>
           </div>
 
@@ -162,7 +172,7 @@ export default function SettingsModal({
               Line Spacing
             </span>
             <div className="grid grid-cols-4 gap-2">
-              {[1.3, 1.5, 1.7, 1.9].map((val) => {
+              {LINE_HEIGHTS.map((val) => {
                 const isActive = settings.lineHeight === val;
                 return (
                   <button

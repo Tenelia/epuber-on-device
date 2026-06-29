@@ -11,17 +11,59 @@ interface TranslateMenuProps {
   savedBooks: { id: string; name: string }[];
 }
 
+const TARGET_LANGUAGES = ['Chinese', 'English', 'French', 'German', 'Japanese', 'Korean', 'Italian', 'Russian', 'Spanish'];
+
+const PROVIDERS = ['openai', 'anthropic', 'cerebras', 'on-device'] as const;
+type Provider = typeof PROVIDERS[number];
+
+const OUTPUT_FORMATS = [
+  { value: 'txt', label: 'Plain Text (.txt)' },
+  { value: 'md', label: 'Markdown (.md)' }
+] as const;
+type OutputFormat = typeof OUTPUT_FORMATS[number]['value'];
+
+const LOCAL_MODELS = [
+  { value: 'gemma-2b-it-q4f16_1-MLC', label: 'Gemma 2B (Q4)' },
+  { value: 'Qwen2-1.5B-Instruct-q4f16_1-MLC', label: 'Qwen 1.5B (Q4)' },
+  { value: 'custom', label: 'Custom Filepath' }
+] as const;
+type LocalModel = typeof LOCAL_MODELS[number]['value'];
+
+const REMOTE_MODELS: Record<Exclude<Provider, 'on-device'>, {value: string, label: string}[]> = {
+  openai: [
+    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' }
+  ],
+  anthropic: [
+    { value: 'claude-3-5-sonnet-20240620', label: 'Claude 3.5 Sonnet' },
+    { value: 'claude-3-opus-20240229', label: 'Claude 3 Opus' },
+    { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' }
+  ],
+  cerebras: [
+    { value: 'llama3.1-8b', label: 'Llama 3.1 8B' },
+    { value: 'llama-3.3-70b', label: 'Llama 3.3 70B' },
+    { value: 'gemma-4-31b', label: 'Gemma 4 31B' }
+  ]
+};
+
 export default function TranslateMenu({ isOpen, onClose, savedBooks }: TranslateMenuProps) {
-  const [provider, setProvider] = useState<'openai' | 'anthropic' | 'cerebras' | 'on-device'>('openai');
+  const [provider, setProvider] = useState<Provider>(PROVIDERS[0]);
   const [apiKey, setApiKey] = useState('');
-  const [targetLanguage, setTargetLanguage] = useState('Spanish');
+  const [targetLanguage, setTargetLanguage] = useState(TARGET_LANGUAGES[0]);
   const [selectedBookId, setSelectedBookId] = useState<string>('');
-  const [outputFormat, setOutputFormat] = useState<'txt' | 'md'>('txt');
-  const [systemPrompt, setSystemPrompt] = useState(`You are a professional literary translator. You must first carefully parse and understand the context, tone, and narrative of the provided book excerpt BEFORE attempting to translate. Maintain the author's voice, formatting, and structural integrity. Translate the following text into {targetLanguage}. Return ONLY the translated text without any conversational preamble or explanations.`);
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>(OUTPUT_FORMATS[0].value);
+  const defaultPrompt = `You are a professional literary translator. You must first carefully parse and understand the context, tone, and narrative of the provided book excerpt BEFORE attempting to translate. Maintain the author's voice, formatting, and structural integrity. Translate the following text into {targetLanguage}. Return ONLY the translated text without any conversational preamble or explanations.`;
+  const [systemPrompt, setSystemPrompt] = useState(defaultPrompt);
   const [isTranslating, setIsTranslating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [webllmProgress, setWebllmProgress] = useState('');
-  const [localModel, setLocalModel] = useState('gemma-2b-it-q4f16_1-MLC');
+  const [localModel, setLocalModel] = useState<LocalModel>(LOCAL_MODELS[0].value);
+  const [remoteModels, setRemoteModels] = useState<Record<string, string>>({
+    openai: REMOTE_MODELS.openai[0].value,
+    anthropic: REMOTE_MODELS.anthropic[0].value,
+    cerebras: REMOTE_MODELS.cerebras[0].value,
+  });
   const [customModelPath, setCustomModelPath] = useState('');
   const [translatedText, setTranslatedText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -39,11 +81,36 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
     }
   }, [provider]);
 
+  useEffect(() => {
+    const savedModels = localStorage.getItem('epub_remote_models');
+    if (savedModels) {
+      setRemoteModels(JSON.parse(savedModels));
+    }
+  }, []);
+
+  useEffect(() => {
+    const savedPrompt = localStorage.getItem('epub_system_prompt');
+    if (savedPrompt) {
+      setSystemPrompt(savedPrompt);
+    }
+  }, []);
+
   const handleApiKeyChange = (val: string) => {
     setApiKey(val);
     const savedKeys = JSON.parse(localStorage.getItem('epub_api_keys') || '{}');
     savedKeys[provider] = val;
     localStorage.setItem('epub_api_keys', JSON.stringify(savedKeys));
+  };
+
+  const handleRemoteModelChange = (providerName: string, val: string) => {
+    const updated = { ...remoteModels, [providerName]: val };
+    setRemoteModels(updated);
+    localStorage.setItem('epub_remote_models', JSON.stringify(updated));
+  };
+
+  const handleSystemPromptChange = (val: string) => {
+    setSystemPrompt(val);
+    localStorage.setItem('epub_system_prompt', val);
   };
 
   const handleTranslate = async () => {
@@ -119,32 +186,51 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
           if (textContent.length > 50) { // Only translate meaningful chapters
             let chapterTranslated = '';
             
-            // Dynamic Moving Window Logic based on Hardware Tier Context Limits
-            const chunkSize = hardware?.recommendedChunkSize || 1000;
-            const overlap = Math.floor(chunkSize * 0.1); // 10% overlap context
-            let currentIdx = 0;
-            
-            while (currentIdx < textContent.length) {
-              const chunk = textContent.substring(currentIdx, currentIdx + chunkSize);
-              let chunkTranslated = '';
+            if (provider === 'on-device') {
+              // Dynamic Moving Window Logic based on Hardware Tier Context Limits
+              const chunkSize = hardware?.recommendedChunkSize || 1000;
+              const overlap = Math.floor(chunkSize * 0.1); // 10% overlap context
+              let currentIdx = 0;
               
-              if (provider === 'on-device' && engine) {
-                setWebllmProgress(`Translating Chapter ${i + 1}/${totalChapters} (${Math.round((currentIdx / textContent.length) * 100)}%). Generating...`);
-                const res = await engine.chat.completions.create({
-                  messages: [
-                    { role: 'system', content: systemPrompt.replace('{targetLanguage}', targetLanguage) },
-                    { role: 'user', content: chunk }
-                  ]
-                });
-                chunkTranslated = res.choices[0]?.message?.content || '';
-              } else {
+              while (currentIdx < textContent.length) {
+                const chunk = textContent.substring(currentIdx, currentIdx + chunkSize);
+                
+                if (engine) {
+                  setWebllmProgress(`Translating Chapter ${i + 1}/${totalChapters} (${Math.round((currentIdx / textContent.length) * 100)}%). Generating...`);
+                  const res = await engine.chat.completions.create({
+                    messages: [
+                      { role: 'system', content: systemPrompt.replace('{targetLanguage}', targetLanguage) },
+                      { role: 'user', content: chunk }
+                    ]
+                  });
+                  chapterTranslated += (res.choices[0]?.message?.content || '') + ' ';
+                }
+                
+                currentIdx += (chunkSize - overlap);
+                
+                // Yield to main thread for UI updates during intense loops
+                await new Promise(r => setTimeout(r, 10));
+              }
+            } else {
+              let chunkSize = 100000; // ~25k tokens for OpenAI/Anthropic
+              if (provider === 'cerebras') {
+                chunkSize = 24000; // ~6k tokens for Cerebras
+              }
+              const overlap = Math.floor(chunkSize * 0.1); // 10% overlap
+              let currentIdx = 0;
+
+              while (currentIdx < textContent.length) {
+                const chunk = textContent.substring(currentIdx, currentIdx + chunkSize);
+                
+                setWebllmProgress(`Translating Chapter ${i + 1}/${totalChapters} (${Math.round((currentIdx / textContent.length) * 100)}%). Sending to ${provider}...`);
+                
                 const res = await fetch('/api/translate', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
                     provider,
                     apiKey,
-                    model: provider === 'cerebras' ? 'llama3.1-70b' : undefined,
+                    model: remoteModels[provider],
                     targetLanguage,
                     systemPrompt: systemPrompt.replace('{targetLanguage}', targetLanguage),
                     content: chunk
@@ -152,19 +238,15 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
                 });
 
                 if (!res.ok) {
-                  const errorData = await res.json();
+                  const errorData = await res.json().catch(() => ({}));
                   throw new Error(errorData.error || 'Translation API request failed');
                 }
 
                 const data = await res.json();
-                chunkTranslated = data.translatedText;
+                chapterTranslated += (data.translatedText || '') + ' ';
+                
+                currentIdx += (chunkSize - overlap);
               }
-              
-              chapterTranslated += chunkTranslated + ' ';
-              currentIdx += (chunkSize - overlap);
-              
-              // Yield to main thread for UI updates during intense loops
-              await new Promise(r => setTimeout(r, 10));
             }
 
             const prefix = outputFormat === 'md' ? `\n\n## Chapter ${i + 1}\n\n` : `\n\n--- Chapter ${i + 1} ---\n\n`;
@@ -227,10 +309,10 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
               <Settings2 className="w-3.5 h-3.5" /> AI Provider
             </label>
             <div className="grid grid-cols-4 gap-3">
-              {['openai', 'anthropic', 'cerebras', 'on-device'].map((p) => (
+              {PROVIDERS.map((p) => (
                 <button
                   key={p}
-                  onClick={() => setProvider(p as any)}
+                  onClick={() => setProvider(p)}
                   className={`py-2 px-3 rounded-xl border ${provider === p ? 'bg-indigo-600/20 border-indigo-500 text-indigo-300 font-bold' : 'bg-white/5 border-white/10 hover:bg-white/10'} transition-all capitalize text-xs whitespace-nowrap`}
                 >
                   {p}
@@ -241,18 +323,42 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
 
           {/* API Key or Local Model Options */}
           {provider !== 'on-device' ? (
-            <div className="space-y-3">
-              <label className="font-semibold text-slate-200 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-                <Key className="w-3.5 h-3.5" /> API Key ({provider})
-              </label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => handleApiKeyChange(e.target.value)}
-                placeholder={`Enter your ${provider} API key...`}
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono text-sm"
-              />
-              <p className="text-[10px] text-slate-500">Keys are stored locally on your device in localStorage.</p>
+            <div className="space-y-4">
+              <div className="space-y-3">
+                <label className="font-semibold text-slate-200 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5" /> API Key ({provider})
+                </label>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => handleApiKeyChange(e.target.value)}
+                  placeholder={`Enter your ${provider} API key...`}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono text-sm"
+                />
+                <p className="text-[10px] text-slate-500">Keys are stored locally on your device in localStorage.</p>
+              </div>
+              <div className="space-y-3">
+                <label className="font-semibold text-slate-200 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                  <Cpu className="w-3.5 h-3.5" /> Model ({provider})
+                </label>
+                <input
+                  list={`models-${provider}`}
+                  value={remoteModels[provider] || ''}
+                  onChange={(e) => handleRemoteModelChange(provider, e.target.value)}
+                  placeholder={`Select or type a ${provider} model...`}
+                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono text-sm"
+                />
+                <datalist id={`models-${provider}`}>
+                  {REMOTE_MODELS[provider as Exclude<Provider, 'on-device'>]?.map(model => (
+                    <option key={model.value} value={model.value}>{model.label}</option>
+                  ))}
+                </datalist>
+                {provider === 'cerebras' && (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    See <a href="https://inference-docs.cerebras.ai/models/overview" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">Cerebras official docs</a> for available model IDs.
+                  </p>
+                )}
+              </div>
             </div>
           ) : (
             <div className="space-y-4 bg-indigo-950/20 border border-indigo-500/30 p-4 rounded-xl">
@@ -262,12 +368,12 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
                 </label>
                 <select
                   value={localModel}
-                  onChange={(e) => setLocalModel(e.target.value)}
+                  onChange={(e) => setLocalModel(e.target.value as LocalModel)}
                   className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 appearance-none"
                 >
-                  <option value="gemma-2b-it-q4f16_1-MLC">Gemma 2B (Q4)</option>
-                  <option value="Qwen2-1.5B-Instruct-q4f16_1-MLC">Qwen 1.5B (Q4)</option>
-                  <option value="custom">Custom Filepath</option>
+                  {LOCAL_MODELS.map(model => (
+                    <option key={model.value} value={model.value}>{model.label}</option>
+                  ))}
                 </select>
                 <p className="text-[10px] text-indigo-200/60 leading-relaxed">
                   These models run locally inside your browser via WebGPU using Google Deepmind / MLC WebLLM technologies. The model will download on first run.
@@ -317,7 +423,7 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
                 onChange={(e) => setTargetLanguage(e.target.value)}
                 className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 appearance-none"
               >
-                {['Spanish', 'French', 'German', 'Chinese', 'Japanese', 'Korean', 'Italian', 'Russian'].map(l => (
+                {TARGET_LANGUAGES.map(l => (
                   <option key={l} value={l}>{l}</option>
                 ))}
               </select>
@@ -331,11 +437,12 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
               </label>
               <select
                 value={outputFormat}
-                onChange={(e) => setOutputFormat(e.target.value as 'txt' | 'md')}
+                onChange={(e) => setOutputFormat(e.target.value as OutputFormat)}
                 className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 appearance-none"
               >
-                <option value="txt">Plain Text (.txt)</option>
-                <option value="md">Markdown (.md)</option>
+                {OUTPUT_FORMATS.map(format => (
+                  <option key={format.value} value={format.value}>{format.label}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -346,7 +453,7 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
             </label>
             <textarea
               value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
+              onChange={(e) => handleSystemPromptChange(e.target.value)}
               className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all font-mono text-xs min-h-[100px]"
             />
           </div>

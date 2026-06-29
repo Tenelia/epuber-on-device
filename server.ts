@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
+import Cerebras from "@cerebras/cerebras_cloud_sdk";
 
 const app = express();
 const PORT = 3000;
@@ -12,6 +13,83 @@ app.use(express.json({ limit: "50mb" }));
 // Helper function to extract text from an EPUB structure
 // We expect the frontend to send the parsed epub data, or at least the raw text of the chapters.
 // To save bandwidth, the frontend will extract the text of the EPUB and send it to the backend.
+
+// Rate Limiter for Cerebras
+interface TokenLimit {
+  rpm: number;
+  tpm: number;
+  tph: number;
+  tpd: number;
+}
+
+class RateLimiter {
+  private requestTimestamps: number[] = [];
+  private tokenTimestamps: { timestamp: number, tokens: number }[] = [];
+  private config: TokenLimit;
+
+  constructor(config: TokenLimit) {
+    this.config = config;
+  }
+
+  async acquire(tokens: number) {
+    while (true) {
+      const now = Date.now();
+      
+      this.requestTimestamps = this.requestTimestamps.filter(t => now - t < 24 * 60 * 60 * 1000);
+      this.tokenTimestamps = this.tokenTimestamps.filter(t => now - t.timestamp < 24 * 60 * 60 * 1000);
+
+      const reqs1M = this.requestTimestamps.filter(t => now - t < 60000);
+      const toks1M = this.tokenTimestamps.filter(t => now - t.timestamp < 60000);
+      const toks1H = this.tokenTimestamps.filter(t => now - t.timestamp < 3600000);
+      
+      const reqCount1M = reqs1M.length;
+      const tokens1M = toks1M.reduce((sum, t) => sum + t.tokens, 0);
+      const tokens1H = toks1H.reduce((sum, t) => sum + t.tokens, 0);
+      const tokens24H = this.tokenTimestamps.reduce((sum, t) => sum + t.tokens, 0);
+
+      let waitTime = 0;
+
+      if (reqCount1M >= this.config.rpm) {
+        waitTime = Math.max(waitTime, 60000 - (now - reqs1M[0]));
+      }
+      
+      if (tokens1M + tokens > this.config.tpm) {
+        let excess = (tokens1M + tokens) - this.config.tpm;
+        let cleared = 0;
+        let i = 0;
+        while (cleared < excess && i < toks1M.length) {
+           cleared += toks1M[i].tokens;
+           waitTime = Math.max(waitTime, 60000 - (now - toks1M[i].timestamp));
+           i++;
+        }
+      }
+
+      if (tokens1H + tokens > this.config.tph) {
+         waitTime = Math.max(waitTime, 60000); 
+      }
+
+      if (tokens24H + tokens > this.config.tpd) {
+         waitTime = Math.max(waitTime, 60000);
+      }
+
+      if (waitTime > 0) {
+        await new Promise(r => setTimeout(r, waitTime + 50));
+        continue;
+      }
+
+      this.requestTimestamps.push(now);
+      this.tokenTimestamps.push({ timestamp: now, tokens });
+      break;
+    }
+  }
+}
+
+const cerebrasGemmaRateLimiter = new RateLimiter({
+  rpm: 5,
+  tpm: 30000,
+  tph: 1000000,
+  tpd: 1000000
+});
 
 app.post("/api/translate", async (req, res) => {
   try {
@@ -30,12 +108,11 @@ app.post("/api/translate", async (req, res) => {
 
     let translatedText = "";
 
-    if (provider === "openai" || provider === "cerebras") {
-      const baseURL = provider === "cerebras" ? "https://api.cerebras.ai/v1" : undefined;
-      const client = new OpenAI({ apiKey, baseURL });
+    if (provider === "openai") {
+      const client = new OpenAI({ apiKey });
       
       const response = await client.chat.completions.create({
-        model: model || (provider === "cerebras" ? "llama3.1-70b" : "gpt-4o"),
+        model: model || "gpt-4o",
         messages: [
           { role: "system", content: finalPrompt },
           { role: "user", content }
@@ -44,6 +121,40 @@ app.post("/api/translate", async (req, res) => {
       });
       
       translatedText = response.choices[0].message.content || "";
+    } else if (provider === "cerebras") {
+      const payload: any = {
+        model: model || "llama3.1-8b",
+        messages: [
+          { role: "system", content: finalPrompt },
+          { role: "user", content }
+        ],
+        temperature: 0.3,
+      };
+
+      if (model === "gemma-4-31b") {
+        payload.reasoning_effort = "low";
+        
+        // Use token estimation of 1 token ~= 4 chars
+        const estimatedTokens = Math.ceil((content.length + finalPrompt.length) / 4);
+        await cerebrasGemmaRateLimiter.acquire(estimatedTokens);
+      }
+
+      const response = await fetch("https://api.cerebras.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || `Cerebras API Error: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      translatedText = data.choices?.[0]?.message?.content || "";
     } else if (provider === "anthropic") {
       const client = new Anthropic({ apiKey });
       
