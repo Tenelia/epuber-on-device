@@ -103,8 +103,15 @@ app.post("/api/translate", async (req, res) => {
       return res.status(400).json({ error: "Content and targetLanguage are required" });
     }
 
-    const defaultPrompt = `You are a professional literary translator. You must first carefully parse and understand the context, tone, and narrative of the provided book excerpt BEFORE attempting to translate. Maintain the author's voice, formatting, and structural integrity. Translate the following text into ${targetLanguage}. Return ONLY the translated text without any conversational preamble or explanations.`;
-    const finalPrompt = systemPrompt || defaultPrompt;
+    const defaultPrompt = `You are a professional literary translator. Translate the provided book excerpt into {targetLanguage}.\nONLY preserve story-relevant formatting (e.g., paragraphs, italics). Do NOT preserve any webpage formats like HTML/CSS.\nReturn ONLY the translated text. Do NOT provide any authorial voice analysis, technical notes, examples, conversational preamble, or explanations. Just output the translated text.`;
+    let finalPrompt = systemPrompt || defaultPrompt;
+    
+    // Ensure the target language is injected
+    if (finalPrompt.includes('{targetLanguage}')) {
+      finalPrompt = finalPrompt.replace('{targetLanguage}', targetLanguage);
+    } else if (!finalPrompt.toLowerCase().includes(targetLanguage.toLowerCase())) {
+      finalPrompt += `\n\nTARGET LANGUAGE: ${targetLanguage}`;
+    }
 
     let translatedText = "";
 

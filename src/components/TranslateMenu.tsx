@@ -53,7 +53,7 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
   const [targetLanguage, setTargetLanguage] = useState(TARGET_LANGUAGES[0]);
   const [selectedBookId, setSelectedBookId] = useState<string>('');
   const [outputFormat, setOutputFormat] = useState<OutputFormat>(OUTPUT_FORMATS[0].value);
-  const defaultPrompt = `You are a professional literary translator. You must first carefully parse and understand the context, tone, and narrative of the provided book excerpt BEFORE attempting to translate. Maintain the author's voice, formatting, and structural integrity. Translate the following text into {targetLanguage}. Return ONLY the translated text without any conversational preamble or explanations.`;
+  const defaultPrompt = `You are a professional literary translator. Translate the provided book excerpt into {targetLanguage}.\nONLY preserve story-relevant formatting (e.g., paragraphs, italics). Do NOT preserve any webpage formats like HTML/CSS.\nReturn ONLY the translated text. Do NOT provide any authorial voice analysis, technical notes, examples, conversational preamble, or explanations. Just output the translated text.`;
   const [systemPrompt, setSystemPrompt] = useState(defaultPrompt);
   const [isTranslating, setIsTranslating] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -199,7 +199,7 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
                   setWebllmProgress(`Translating Chapter ${i + 1}/${totalChapters} (${Math.round((currentIdx / textContent.length) * 100)}%). Generating...`);
                   const res = await engine.chat.completions.create({
                     messages: [
-                      { role: 'system', content: systemPrompt.replace('{targetLanguage}', targetLanguage) },
+                      { role: 'system', content: systemPrompt.replaceAll('{targetLanguage}', targetLanguage) },
                       { role: 'user', content: chunk }
                     ]
                   });
@@ -232,7 +232,7 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
                     apiKey,
                     model: remoteModels[provider],
                     targetLanguage,
-                    systemPrompt: systemPrompt.replace('{targetLanguage}', targetLanguage),
+                    systemPrompt: systemPrompt.replaceAll('{targetLanguage}', targetLanguage),
                     content: chunk
                   })
                 });
