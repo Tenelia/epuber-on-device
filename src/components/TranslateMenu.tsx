@@ -129,6 +129,7 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
               let chunkTranslated = '';
               
               if (provider === 'on-device' && engine) {
+                setWebllmProgress(`Translating Chapter ${i + 1}/${totalChapters} (${Math.round((currentIdx / textContent.length) * 100)}%). Generating...`);
                 const res = await engine.chat.completions.create({
                   messages: [
                     { role: 'system', content: systemPrompt.replace('{targetLanguage}', targetLanguage) },
