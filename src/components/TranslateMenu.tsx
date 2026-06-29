@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { X, Languages, Key, Settings2, FileText, Loader2, Download, FileJson } from 'lucide-react';
+import { X, Languages, Key, Settings2, FileText, Loader2, Download, FileJson, Cpu } from 'lucide-react';
 import { LibraryDb } from '../lib/libraryDb';
 import { EpubParser } from '../lib/epubParser';
 import { TextParser } from '../lib/textParser';
+import { HardwareDetector, HardwareCapabilities } from '../lib/hardware';
 
 interface TranslateMenuProps {
   isOpen: boolean;
@@ -24,6 +25,11 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
   const [customModelPath, setCustomModelPath] = useState('');
   const [translatedText, setTranslatedText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [hardware, setHardware] = useState<HardwareCapabilities | null>(null);
+
+  useEffect(() => {
+    HardwareDetector.detect().then(setHardware);
+  }, []);
 
   useEffect(() => {
     const savedKeys = localStorage.getItem('epub_api_keys');
@@ -111,41 +117,57 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
           const textContent = content.replace(/<[^>]*>?/gm, ' ').trim();
           
           if (textContent.length > 50) { // Only translate meaningful chapters
-            let chunkTranslated = '';
+            let chapterTranslated = '';
             
-            if (provider === 'on-device' && engine) {
-              const res = await engine.chat.completions.create({
-                messages: [
-                  { role: 'system', content: systemPrompt.replace('{targetLanguage}', targetLanguage) },
-                  { role: 'user', content: textContent.substring(0, 4000) }
-                ]
-              });
-              chunkTranslated = res.choices[0]?.message?.content || '';
-            } else {
-              const res = await fetch('/api/translate', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  provider,
-                  apiKey,
-                  model: provider === 'cerebras' ? 'llama3.1-70b' : undefined,
-                  targetLanguage,
-                  systemPrompt: systemPrompt.replace('{targetLanguage}', targetLanguage),
-                  content: textContent.substring(0, 4000) // Truncate to fit limits for this demo
-                })
-              });
+            // Dynamic Moving Window Logic based on Hardware Tier Context Limits
+            const chunkSize = hardware?.recommendedChunkSize || 1000;
+            const overlap = Math.floor(chunkSize * 0.1); // 10% overlap context
+            let currentIdx = 0;
+            
+            while (currentIdx < textContent.length) {
+              const chunk = textContent.substring(currentIdx, currentIdx + chunkSize);
+              let chunkTranslated = '';
+              
+              if (provider === 'on-device' && engine) {
+                const res = await engine.chat.completions.create({
+                  messages: [
+                    { role: 'system', content: systemPrompt.replace('{targetLanguage}', targetLanguage) },
+                    { role: 'user', content: chunk }
+                  ]
+                });
+                chunkTranslated = res.choices[0]?.message?.content || '';
+              } else {
+                const res = await fetch('/api/translate', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    provider,
+                    apiKey,
+                    model: provider === 'cerebras' ? 'llama3.1-70b' : undefined,
+                    targetLanguage,
+                    systemPrompt: systemPrompt.replace('{targetLanguage}', targetLanguage),
+                    content: chunk
+                  })
+                });
 
-              if (!res.ok) {
-                const errorData = await res.json();
-                throw new Error(errorData.error || 'Translation API request failed');
+                if (!res.ok) {
+                  const errorData = await res.json();
+                  throw new Error(errorData.error || 'Translation API request failed');
+                }
+
+                const data = await res.json();
+                chunkTranslated = data.translatedText;
               }
-
-              const data = await res.json();
-              chunkTranslated = data.translatedText;
+              
+              chapterTranslated += chunkTranslated + ' ';
+              currentIdx += (chunkSize - overlap);
+              
+              // Yield to main thread for UI updates during intense loops
+              await new Promise(r => setTimeout(r, 10));
             }
 
             const prefix = outputFormat === 'md' ? `\n\n## Chapter ${i + 1}\n\n` : `\n\n--- Chapter ${i + 1} ---\n\n`;
-            fullTranslated += prefix + chunkTranslated;
+            fullTranslated += prefix + chapterTranslated.trim();
           }
         }
         
@@ -184,6 +206,20 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
 
         <div className="p-6 overflow-y-auto flex-1 text-slate-300 text-sm space-y-6">
           
+          {hardware && (
+            <div className="bg-slate-900/50 border border-slate-700/50 rounded-xl p-3 flex flex-col gap-1.5 text-[10px] text-slate-400 font-mono">
+              <div className="flex items-center gap-1.5 font-bold text-slate-200">
+                <Cpu className="w-3.5 h-3.5" /> Hardware Profile Detected
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                <div><span className="text-slate-500">Tier:</span> <span className={hardware.computeTier === 'NPU' || hardware.computeTier === 'GPU' ? 'text-emerald-400' : 'text-amber-400'}>{hardware.computeTier}</span></div>
+                <div><span className="text-slate-500">NPU (WebNN):</span> {hardware.hasNPU ? 'Available' : 'None'}</div>
+                <div><span className="text-slate-500">GPU (WebGPU):</span> {hardware.hasWebGPU ? 'Available' : hardware.hasWebGL ? 'WebGL Fallback' : 'None'}</div>
+                <div><span className="text-slate-500">Moving Window:</span> {hardware.recommendedChunkSize} chars</div>
+              </div>
+            </div>
+          )}
+
           {/* Provider Selection */}
           <div className="space-y-3">
             <label className="font-semibold text-slate-200 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
