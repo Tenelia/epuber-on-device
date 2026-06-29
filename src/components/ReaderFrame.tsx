@@ -89,7 +89,7 @@ export default function ReaderFrame({
         const asset = book.assets[fullPath] || book.assets[fullPath.toLowerCase()];
         if (asset) {
           if (!asset.blobUrl) {
-            const blob = new Blob([asset.data], { type: asset.mediaType });
+            const blob = new Blob([asset.data as any], { type: asset.mediaType });
             asset.blobUrl = URL.createObjectURL(blob);
           }
           if (!localBlobUrlsRef.current.includes(asset.blobUrl)) {
@@ -120,7 +120,7 @@ export default function ReaderFrame({
             const subAsset = book.assets[absoluteAssetPath] || book.assets[absoluteAssetPath.toLowerCase()];
             if (subAsset) {
               if (!subAsset.blobUrl) {
-                const subBlob = new Blob([subAsset.data], { type: subAsset.mediaType });
+                const subBlob = new Blob([subAsset.data as any], { type: subAsset.mediaType });
                 subAsset.blobUrl = URL.createObjectURL(subBlob);
               }
               if (!localBlobUrlsRef.current.includes(subAsset.blobUrl)) {

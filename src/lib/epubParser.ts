@@ -277,7 +277,7 @@ export class EpubParser {
 
     if (coverItem && assets[coverItem.href]) {
       const asset = assets[coverItem.href];
-      const blob = new Blob([asset.data], { type: asset.mediaType });
+      const blob = new Blob([asset.data as any], { type: asset.mediaType });
       coverBlobUrl = URL.createObjectURL(blob);
       asset.blobUrl = coverBlobUrl; // Save reference
     }

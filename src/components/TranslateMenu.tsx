@@ -89,7 +89,7 @@ export default function TranslateMenu({ isOpen, onClose, savedBooks }: Translate
               {
                 model_id: "custom-local-model",
                 model_lib: "webgpu", // placeholder
-                model_url: customModelPath,
+                model: customModelPath,
               }
             ]
           };
